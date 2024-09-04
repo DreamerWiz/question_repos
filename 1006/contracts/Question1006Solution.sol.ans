@@ -1,0 +1,276 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.17;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+abstract contract auctionBase {
+    enum AuctionState {
+        None,
+        SETTELED,
+        CANCELED,
+        ENDED
+    }
+
+    struct Auction {
+        address owner;
+        IERC20 token;
+        AuctionState state;
+        uint256 startPrice;
+        uint256 endPrice;
+        uint256 startTime;
+        uint256 endTime;
+        uint256 depositedTokens;
+        uint256 collectedFunds;
+        uint256 lastPrice;
+    }
+    function getAuctionInfo(uint auctionId) public virtual view returns (Auction memory);
+
+    function isAuctionLive(uint auctionId) public virtual view returns (bool);
+
+    function getCurrentPrice(uint256 auctionId) public virtual view returns (uint256);
+
+    function createAuction(
+        address _token,
+        uint256 _startPrice,
+        uint256 _endPrice,
+        uint256 _startTime,
+        uint256 _endTime,
+        uint256 _tokenAmount
+    ) public virtual;
+
+    function cancelAuction(uint256 auctionId) public virtual;
+
+
+    function bid(uint256 auctionId) public virtual payable;
+
+    function claimTokens(uint256 auctionId) public virtual;
+
+    function endAuctionAndClaimProfit(uint256 auctionId) public virtual;
+}
+
+contract Question1006Solution is auctionBase {
+
+
+    uint256 public nextAuctionId = 1;
+    mapping(uint256 => Auction) public auctions;
+    mapping(uint256 => mapping(address => uint256)) public auctionBids; // Record bids using mapping
+    address public protocolAddress;
+    address public owner;
+    event AuctionCreated(
+        uint256 auctionId,
+        uint256 _startPrice,
+        uint256 endPrice,
+        uint256 startTime,
+        uint256 endTime,
+        uint256 tokenAmount
+    );
+    event AuctionCanceled(uint256 auctionId);
+    event AuctionBided(
+        uint256 auctionId,
+        address bidder,
+        uint256 amount,
+        uint256 currentPrice
+    );
+    event AuctionEnded(uint256 auctionId, uint256 profit, uint256 protocolFee);
+    event AuctionClaimed(
+        uint256 auctionId,
+        address winner,
+        uint256 tokenAmount
+    );
+
+    constructor(address _protocolAddress) {
+        protocolAddress = _protocolAddress;
+        owner = msg.sender;
+    }
+
+    function getAuctionInfo(
+        uint auctionId
+    ) public override view returns (Auction memory) {
+        return auctions[auctionId];
+    }
+
+    function isAuctionLive(uint auctionId) public override view returns (bool) {
+        return
+            (auctions[auctionId].startTime < block.timestamp &&
+                auctions[auctionId].endTime > block.timestamp) &&
+            auctions[auctionId].lastPrice == 0;
+    }
+
+    function createAuction(
+        address _token,
+        uint256 _startPrice,
+        uint256 _endPrice,
+        uint256 _startTime,
+        uint256 _endTime,
+        uint256 _tokenAmount
+    ) public override {
+        require(
+            _startPrice > _endPrice,
+            "Start price should be higher than end price"
+        );
+        require(
+            _endTime > _startTime,
+            "Start time should be lower than end time"
+        );
+        require(_token != address(0), "token should not be 0 address");
+        require(_tokenAmount > 0, "token amount should not be lower than 0");
+        IERC20 token = IERC20(_token);
+        require(
+            token.transferFrom(
+                msg.sender,
+                address(this),
+                _tokenAmount * 1 ether
+            ),
+            "Token transfer failed"
+        );
+
+        Auction storage newAuction = auctions[nextAuctionId];
+        newAuction.owner = msg.sender;
+        newAuction.token = token;
+        newAuction.startPrice = _startPrice;
+        newAuction.endPrice = _endPrice;
+        newAuction.startTime = _startTime;
+        newAuction.endTime = _endTime;
+        newAuction.depositedTokens = _tokenAmount;
+        newAuction.state = AuctionState.SETTELED;
+
+        emit AuctionCreated(
+            nextAuctionId,
+            _startPrice,
+            _endPrice,
+            _startTime,
+            _endTime,
+            _tokenAmount
+        );
+        nextAuctionId += 1;
+    }
+
+    function cancelAuction(uint256 auctionId) public override {
+        Auction storage auction = auctions[auctionId];
+        require(
+            msg.sender == auction.owner,
+            "Only the owner can start the auction"
+        );
+        require(
+            auction.state == AuctionState.SETTELED,
+            "Invsettled auction state"
+        );
+        require(auction.startTime > block.timestamp, "Auction already started");
+
+        IERC20 token = IERC20(auction.token);
+        require(
+            token.transfer(auction.owner, auction.depositedTokens * 1 ether),
+            "Token transfer failed"
+        );
+        auction.state = AuctionState.CANCELED;
+
+        emit AuctionCanceled(auctionId);
+    }
+
+    function getCurrentPrice(uint256 auctionId) public override view returns (uint256) {
+        Auction storage auction = auctions[auctionId];
+        if (auction.lastPrice != 0) {
+            return auction.lastPrice;
+        } else if (block.timestamp <= auction.startTime) {
+            return auction.startPrice;
+        } else if (block.timestamp >= auction.endTime) {
+            return auction.endPrice;
+        }
+
+        uint256 elapsedTime = block.timestamp - auction.startTime;
+        uint256 totalDuration = auction.endTime - auction.startTime;
+        uint256 priceDifference = auction.startPrice - auction.endPrice;
+        uint256 currentPrice = auction.startPrice -
+            ((priceDifference * elapsedTime) / totalDuration);
+
+        return currentPrice;
+    }
+
+    function bid(uint256 auctionId) public override payable {
+        Auction storage auction = auctions[auctionId];
+        require(
+            auction.state == AuctionState.SETTELED,
+            "Auction is not settled"
+        );
+        require(isAuctionLive(auctionId), "Auction is not live");
+
+        uint256 currentPrice = getCurrentPrice(auctionId);
+        if (
+            msg.value + auction.collectedFunds >
+            auction.depositedTokens * currentPrice
+        ) {
+            uint256 excessVal = msg.value +
+                auction.collectedFunds -
+                auction.depositedTokens *
+                currentPrice;
+            auction.lastPrice = currentPrice;
+            auctionBids[auctionId][msg.sender] = msg.value - excessVal;
+            auction.collectedFunds += msg.value - excessVal;
+            (bool success, ) = msg.sender.call{value: excessVal}("");
+            require(success, "Transfer failed");
+        } else {
+            auctionBids[auctionId][msg.sender] = msg.value;
+            auction.collectedFunds += msg.value;
+        }
+
+        emit AuctionBided(auctionId, msg.sender, msg.value, currentPrice);
+    }
+
+    function claimTokens(uint256 auctionId) public override {
+        Auction storage auction = auctions[auctionId];
+        require(
+            auction.state == AuctionState.ENDED,
+            "Auction has not ended yet"
+        );
+        require(!isAuctionLive(auctionId), "Auction is live");
+
+        uint256 bidAmount = auctionBids[auctionId][msg.sender];
+        require(bidAmount > 0, "You did not participate or already claimed");
+
+        uint256 tokenAmount = bidAmount / getCurrentPrice(auctionId);
+
+        auctionBids[auctionId][msg.sender] = 0; // Reset individual bid for reentrancy protection
+
+        require(
+            auction.token.transfer(msg.sender, tokenAmount),
+            "Token transfer failed"
+        );
+        emit AuctionClaimed(auctionId, msg.sender, tokenAmount);
+    }
+
+    function endAuctionAndClaimProfit(uint256 auctionId) public override {
+        Auction storage auction = auctions[auctionId];
+        require(
+            msg.sender == auction.owner,
+            "Only the owner can end the auction"
+        );
+        require(
+            auction.state == AuctionState.SETTELED,
+            "Auction is not settled"
+        );
+        require(!isAuctionLive(auctionId), "Auction is still live");
+
+        uint256 protocolFee = (auction.collectedFunds * 10) / 100;
+        uint256 surplusToken = auction.depositedTokens *
+            1 ether -
+            auction.collectedFunds /
+            getCurrentPrice(auctionId);
+        uint256 ownerRevenue = auction.collectedFunds - protocolFee;
+
+        // Prevent reentrancy by setting collectedFunds to 0
+        auction.collectedFunds = 0;
+        auction.state = AuctionState.ENDED;
+
+        require(
+            auction.token.transfer(msg.sender, surplusToken),
+            "Token transfer failed"
+        );
+        (bool success1, ) = payable(protocolAddress).call{value: protocolFee}(
+            ""
+        );
+        (bool success2, ) = msg.sender.call{value: ownerRevenue}("");
+
+        require(success1 && success2, "Transfer failed");
+        emit AuctionEnded(auctionId, ownerRevenue, protocolFee);
+    }
+}

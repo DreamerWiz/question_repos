@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.17;
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+abstract contract Question1001BaseContract is ERC20 {
+    uint public totalEthMinted; // 總共已經賣出的ETH
+    constructor(
+        string memory tokenName,
+        string memory tokenSymbol,
+        uint tokensPrice,
+        address owner
+    ) {}
+
+    function owner() external view virtual returns (address); // return address of the owner
+
+    function tokenPrice() external view virtual returns (uint); // return the capacity.
+
+    function mint(address account, uint tokenId) external virtual; // function for mingting tokens.
+
+    function addLockedMint(
+        address to,
+        uint amount,
+        uint unlockedBlockNum // the block number to unlock all tokens
+    ) external virtual; // function for adding locked tokens to the address.
+
+    function claimUnlockedToken() external virtual; // function for claiming unlocked tokens.
+
+    function publicMint() external payable virtual; // function for public minting token by ETH.
+}
+
+contract Question1001Solution is Question1001BaseContract {
+    uint private _tokenPrice;
+    address private _owner;
+    uint private constant MAX_ETH_PER_ADDRESS = 2 ether; // 每個地址最多能mint 2 ETH
+    uint private constant MAX_TOTAL_ETH = 5000 ether; // 總共最多能賣 5000 ETH
+    uint public lock;
+
+    struct LockedToken {
+        uint totalLockedBalance;
+        uint totalDebt;
+        uint lastUpdatedBlock;
+        uint perBlockUnlockedAmount;
+        uint unlockedBlockNum;
+        uint unclaimedToken;
+    }
+
+    mapping(address => uint256) private _addressEthMinted; // 每個地址已經mint了多少ETH
+    mapping(address => LockedToken) private _lockedTokens;
+
+    constructor(
+        string memory tokenName,
+        string memory tokenSymbol,
+        uint tokensPrice,
+        address owner
+    )
+        ERC20(tokenName, tokenSymbol)
+        Question1001BaseContract(tokenName, tokenSymbol, tokensPrice, owner)
+    {
+        require(tokensPrice > 0, "tokensPrice must be greater than 0");
+        require(owner != address(0), "address should not be zero address");
+        _tokenPrice = tokensPrice;
+        _owner = owner;
+    }
+
+    modifier entrancyReguard() {
+        require(lock == 0);
+        lock = 1;
+        _;
+        lock = 0;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == _owner, "Only owner can call this function");
+        _;
+    }
+
+    function owner() external view override returns (address) {
+        return _owner;
+    }
+
+    function mint(address to, uint amount) external override onlyOwner {
+        _mint(to, amount);
+    }
+
+    function tokenPrice() external view override returns (uint) {
+        return _tokenPrice;
+    }
+
+    function publicMint() external payable override entrancyReguard {
+        uint256 ethRequired = msg.value; // Directly use msg.value as the sent ETH amount
+
+        require(totalEthMinted <= MAX_TOTAL_ETH, "Total mint limit reached");
+        require(
+            _addressEthMinted[msg.sender] <= MAX_ETH_PER_ADDRESS,
+            "Per address mint limit reached"
+        );
+        require(msg.value >= _tokenPrice, "Insufficient value sent"); // Ensure at least one token can be minted
+
+        // Calculate if a refund is needed
+        uint256 excessEth = 0;
+        if (_addressEthMinted[msg.sender] + ethRequired > MAX_ETH_PER_ADDRESS) {
+            excessEth +=
+                _addressEthMinted[msg.sender] +
+                ethRequired -
+                MAX_ETH_PER_ADDRESS;
+            ethRequired = MAX_ETH_PER_ADDRESS - _addressEthMinted[msg.sender];
+        }
+        if (totalEthMinted + ethRequired > MAX_TOTAL_ETH) {
+            excessEth += totalEthMinted + ethRequired - MAX_TOTAL_ETH;
+            ethRequired = msg.value - excessEth;
+        }
+
+        uint256 amount = ethRequired / _tokenPrice; // Recalculate the amount based on the adjusted ethRequired
+        _mint(msg.sender, amount);
+        totalEthMinted += ethRequired;
+        _addressEthMinted[msg.sender] += ethRequired;
+
+        // Refund any excess ETH
+        if (excessEth > 0) {
+            (bool sent, bytes memory data) = payable(msg.sender).call{
+                value: excessEth
+            }("");
+            require(sent, "Failed to refund excess ETH");
+        }
+    }
+
+    function addLockedMint(
+        address to,
+        uint amount,
+        uint unlockedBlockNum
+    ) external override onlyOwner {
+        require(to!=address(0));
+        require(
+            unlockedBlockNum > block.number,
+            "Locked block must be in the future"
+        );
+        calculateUnclaimedToken(to);
+
+        LockedToken storage lockedToken = _lockedTokens[to];
+        uint totalBlocks = (unlockedBlockNum - block.number);
+
+        lockedToken.unlockedBlockNum = unlockedBlockNum;
+        lockedToken.totalLockedBalance += amount;
+        uint totalAmount = (lockedToken.totalLockedBalance -
+            lockedToken.totalDebt -
+            lockedToken.unclaimedToken);
+        uint left = totalAmount - totalAmount / totalBlocks * totalBlocks;
+        lockedToken.perBlockUnlockedAmount = (totalAmount - left) / totalBlocks;
+    }
+
+    function calculateUnclaimedToken(
+        address target
+    ) internal {
+        LockedToken storage lockedToken = _lockedTokens[target];
+        uint claimableAmount;
+        if (block.number > lockedToken.unlockedBlockNum) {
+            claimableAmount =
+                lockedToken.totalLockedBalance -
+                lockedToken.totalDebt;
+            
+        } else {
+            uint claimableBlocks = block.number - lockedToken.lastUpdatedBlock;
+            claimableAmount = lockedToken.perBlockUnlockedAmount *
+                claimableBlocks +
+                lockedToken.unclaimedToken;
+        }
+        lockedToken.unclaimedToken = claimableAmount;
+        lockedToken.lastUpdatedBlock = block.number;
+    }
+
+    function claimUnlockedToken() external override {
+        LockedToken storage lockedToken = _lockedTokens[msg.sender];
+        calculateUnclaimedToken(msg.sender);
+        require(lockedToken.unclaimedToken > 0, "No tokens are claimable yet");
+        _mint(msg.sender, lockedToken.unclaimedToken);
+        lockedToken.totalDebt += lockedToken.unclaimedToken;
+        lockedToken.unclaimedToken = 0;
+    }
+}

@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.17;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+contract StakingContract {
+    IERC20 public token;
+    uint256 public constant REWARD_RATE = 5; // annual reward rate in percent
+    uint256 public constant REWARD_RATE_DECIMAL = 10 ** 2; // reward decimal in per year
+
+    struct Stake {
+        uint256 principal;
+        uint256 rewards;
+        uint256 timestamp;
+    }
+
+    mapping(address => Stake) public stakes;
+
+    constructor(IERC20 _token) {
+        token = _token;
+    }
+
+    function stake(uint256 amount) public {
+        require(token.balanceOf(msg.sender) >= amount, "Not enough balance");
+        token.transferFrom(msg.sender, address(this), amount);
+        if (stakes[msg.sender].timestamp > 0) {
+            uint256 reward = calculateReward(msg.sender);
+            stakes[msg.sender].rewards += reward;
+        }
+        stakes[msg.sender].principal += amount;
+        stakes[msg.sender].timestamp = block.timestamp;
+    }
+
+    function withdraw(uint256 amount) public {
+        require(stakes[msg.sender].principal >= amount, "Not enough staked");
+        uint256 reward = calculateReward(msg.sender);
+        stakes[msg.sender].rewards += reward;
+        stakes[msg.sender].principal -= amount;
+        stakes[msg.sender].timestamp = block.timestamp;
+        token.transfer(msg.sender, amount + stakes[msg.sender].rewards);
+        stakes[msg.sender].rewards = 0;
+    }
+
+    function calculateReward(address staker) public view returns (uint256) {
+        Stake storage _stake = stakes[staker];
+        uint256 timeElapsed = block.timestamp - _stake.timestamp; // in seconds
+        uint256 reward = (_stake.principal * REWARD_RATE * timeElapsed) /
+            (365 days) /
+            REWARD_RATE_DECIMAL;
+        return reward;
+    }
+}

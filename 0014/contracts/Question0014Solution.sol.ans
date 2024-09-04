@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.17;
+
+contract Question0014Solution {
+    mapping(address => uint256) public balances;
+
+    function deposit() public payable {
+        balances[msg.sender] += msg.value;
+    }
+
+    // You can implement the withdraw() and related neccessary function here
+    ////////////////////////////////////////////
+    bool internal locked;
+
+    modifier noReentrant() {
+        require(!locked, "No re-entrancy");
+        locked = true;
+        _;
+        locked = false;
+    }
+
+    function withdraw() public noReentrant{
+        uint bal = balances[msg.sender];
+        require(bal > 0);
+
+        (bool sent, ) = msg.sender.call{value: bal}("");
+        require(sent, "Failed to send Ether");
+
+        balances[msg.sender] = 0;
+    }
+
+    ////////////////////////////////////////////
+
+    // Helper function to check the balance of this contract
+    function getBalance() public view returns (uint256) {
+        return address(this).balance;
+    }
+}
+
+contract Attack {
+    Question0014Solution
+        public decentralizedBanktoAttackFixChallenge;
+
+    constructor(address _decentralizedBanktoAttackAddress) {
+        decentralizedBanktoAttackFixChallenge = Question0014Solution(
+            _decentralizedBanktoAttackAddress
+        );
+    }
+
+    fallback() external payable {
+        if (address(decentralizedBanktoAttackFixChallenge).balance >= 1 ether) {
+            decentralizedBanktoAttackFixChallenge.withdraw();
+        }
+    }
+
+    function attack() external payable {
+        require(msg.value >= 1 ether);
+        decentralizedBanktoAttackFixChallenge.deposit{value: 1 ether}();
+        decentralizedBanktoAttackFixChallenge.withdraw();
+    }
+
+    function getBalance() public view returns (uint256) {
+        return address(this).balance;
+    }
+}

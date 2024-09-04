@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+
+contract Question0010Solution {
+    struct Trade {
+        address requester;
+        address nft1Address;
+        uint256 nft1Id;
+        address nft2Address;
+        uint256 nft2Id;
+    }
+
+    mapping(bytes32 => Trade) public trades;
+
+    event TradeProposed(bytes32 tradeId);
+
+    function proposeTrade(
+        address nft1Address, uint256 nft1Id,
+        address nft2Address, uint256 nft2Id
+    ) public returns (bytes32) {
+        bytes32 tradeId = keccak256(abi.encodePacked(nft1Address, nft1Id, nft2Address, nft2Id, msg.sender));
+        trades[tradeId] = Trade(msg.sender, nft1Address, nft1Id, nft2Address, nft2Id);
+        emit TradeProposed(tradeId);
+        return tradeId;
+    }
+
+
+    function executeTrade(bytes32 tradeId) public {
+        Trade memory trade = trades[tradeId];
+        require(msg.sender != trade.requester, "Trade requester cannot execute the trade.");
+
+        IERC721 nft1 = IERC721(trade.nft1Address);
+        IERC721 nft2 = IERC721(trade.nft2Address);
+
+        address ownerNft1 = nft1.ownerOf(trade.nft1Id);
+        address ownerNft2 = nft2.ownerOf(trade.nft2Id);
+
+        require(msg.sender == ownerNft1 || msg.sender == ownerNft2, "You must own one of the NFTs to execute the trade.");
+
+        nft1.safeTransferFrom(ownerNft1, ownerNft2, trade.nft1Id);
+        nft2.safeTransferFrom(ownerNft2, ownerNft1, trade.nft2Id);
+
+        delete trades[tradeId];
+    }
+}

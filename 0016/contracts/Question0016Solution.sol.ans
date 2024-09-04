@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.17;
+
+contract EighthIsWinner {
+    uint public targetAmount = 8 ether;
+    uint public balance;
+    address public winner;
+
+    function deposit() public payable {
+        // Write your code here
+        require(msg.value == 1 ether, "You can only send 1 Ether");
+
+        require(balance < targetAmount, "Game is over");
+        balance += 1 ether;
+
+        if (balance == targetAmount) {
+            winner = msg.sender;
+        }
+    }
+
+    function claimReward() public {
+        require(msg.sender == winner, "Not winner");
+
+        (bool sent, ) = msg.sender.call{value: address(this).balance}("");
+        require(sent, "Failed to send Ether");
+    }
+
+    function getBalance() public view returns (uint256) {
+        return address(this).balance;
+    }
+
+    function getWinner() public view returns (address) {
+        return winner;
+    }
+}
+
+contract Question0016Solution {
+    EighthIsWinner eighthIsWinner;
+
+    constructor(EighthIsWinner _eighthIsWinner) {
+        eighthIsWinner = EighthIsWinner(_eighthIsWinner);
+    }
+
+    function attack() public payable {
+        address payable addr = payable(address(eighthIsWinner));
+        selfdestruct(addr);
+    }
+}
+

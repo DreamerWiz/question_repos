@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract Question0004Solution is ERC721URIStorage, Ownable {
+    uint256 public tokenCounter;
+    uint256 public mintingFee;
+
+    constructor (uint256 _mintingFee) ERC721("MyRefundableMintableNFT", "MNFT") {
+        tokenCounter = 0;
+        mintingFee = _mintingFee;
+    }
+
+    function createCollectible(string memory tokenURI) public payable returns (uint256) {
+        require(msg.value >= mintingFee, "Not enough ETH sent; check minting fee!");
+
+        uint256 newItemId = tokenCounter;
+        _safeMint(msg.sender, newItemId);
+        _setTokenURI(newItemId, tokenURI);
+        tokenCounter = tokenCounter + 1;
+
+        // Refund excess payment
+        if (msg.value > mintingFee) {
+            (bool success, ) = payable(msg.sender).call{value:msg.value - mintingFee}("");
+            require(success);
+        }
+
+        return newItemId;
+    }
+}

@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
+
+contract Question0009Solution is ERC1155 {
+    uint256 public constant ITEM_ID = 0;
+    IERC721 public myERC721;
+    mapping(uint256 => bool) public minted;
+
+    constructor(address _myERC721) ERC1155("https://myapi.com/{id}.json") {
+        myERC721 = IERC721(_myERC721);
+    }
+
+    function mintItem(uint256 tokenId, uint256 amount) public {
+        require(myERC721.ownerOf(tokenId) == msg.sender, "Must own the corresponding MyERC721 token to mint");
+        require(!minted[tokenId], "This token has already been used to mint");
+        _mint(msg.sender, ITEM_ID, amount, "");
+        minted[tokenId] = true;
+    }
+}

@@ -1,0 +1,432 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.17;
+
+abstract contract SocialBase {    
+    constructor(address _owner) {}
+    address public protocolFeeDestination;
+    uint256 public protocolFeePercent;
+    uint256 public subjectFeePercent;
+    address public owner;
+    // CardsSubject => carePresale
+    mapping(address => Presale) public presales;
+    // Internal Card Approvals for CardsSubject => (User => (Approvee => Balance))
+    mapping(address => mapping(address => mapping(address => uint256)))
+        public approvals;
+    // CardsSubject => (Holder => Balance)
+    mapping(address => mapping(address => uint256)) public cardsBalance;
+    // CardsSubject => Supply
+    mapping(address => uint256) public cardsSupply;
+
+    enum PresaleStage {
+        NotSetteled,
+        Initialized,
+        Public
+    }
+
+    struct Presale {
+        mapping(address => uint256) whitelist;
+        mapping(address => uint256) contributions;
+        uint256 price;
+        uint256 proceededValue;
+        uint256 totalCards;
+        uint32 endTimestamp;
+        PresaleStage status;
+    }
+
+    event Transfer(
+        address indexed cardsSubject,
+        address indexed from,
+        address indexed to,
+        uint256 value
+    );
+    event Approval(
+        address indexed cardsSubject,
+        address indexed from,
+        address indexed to,
+        uint256 value
+    );
+    event Trade(
+        address trader,
+        address subject,
+        bool isBuy,
+        uint256 cardAmount,
+        uint256 ethAmount,
+        uint256 protocolEthAmount,
+        uint256 subjectEthAmount,
+        uint256 supply
+    );
+
+    function setFeeDestination(address _feeDestination) public virtual;
+
+    function setProtocolFeePercent(uint256 _feePercent) public virtual;
+
+    function setSubjectFeePercent(uint256 _feePercent) public virtual;
+
+    function getPrice(
+        uint256 supply,
+        uint256 amount
+    ) public pure virtual returns (uint256);
+
+    // Transfers cards from current owner to receiver. Can be used for gifting or distributing cards.
+    function transferCards(
+        address _cardsSubject,
+        address _to,
+        uint256 _amount
+    ) public virtual;
+
+    // Transfers from address, spends allowance
+    function transferFrom(
+        address _cardsSubject,
+        address _from,
+        address _to,
+        uint256 _amount
+    ) public virtual;
+
+    // Approve cards from current owner to aprovee.
+    function approve(
+        address _cardsSubject,
+        address _to,
+        uint256 _amount
+    ) public virtual;
+
+    // Contribute to presale
+    function contribute(
+        address _cardsSubject,
+        uint256 _cards
+    ) public payable virtual;
+
+    // Set whitelist
+    function setPresale(
+        address[] calldata _addresses,
+        uint256[] calldata _cardsAllowed,
+        uint256 _price,
+        uint32 _endTimestamp
+    ) public virtual;
+
+    // Public cards for trading
+    function publicCards() public payable virtual;
+
+    // Buyer claim presaled cards
+    function claimCards(address cardsSubject) public virtual;
+
+    function getBuyPriceAfterFee(
+        address cardsSubject,
+        uint256 amount
+    ) public view virtual returns (uint256);
+
+    function getSellPriceAfterFee(
+        address cardsSubject,
+        uint256 amount
+    ) public view virtual returns (uint256);
+
+    function buyCards(
+        address cardsSubject,
+        uint256 amount
+    ) public payable virtual;
+
+    function sellCards(
+        address cardsSubject,
+        uint256 amount
+    ) public payable virtual;
+}
+
+contract Question1005Solution is SocialBase {
+    uint public lock;
+
+    constructor(address _owner) SocialBase(_owner){
+        owner = _owner;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner);
+        _;
+    }
+
+    modifier entrancyReguard() {
+        require(lock == 0);
+        lock = 1;
+        _;
+        lock = 0;
+    }
+
+    function setFeeDestination(
+        address _feeDestination
+    ) public override onlyOwner {
+        protocolFeeDestination = _feeDestination;
+    }
+
+    function setProtocolFeePercent(
+        uint256 _feePercent
+    ) public override onlyOwner {
+        protocolFeePercent = _feePercent;
+    }
+
+    function setSubjectFeePercent(
+        uint256 _feePercent
+    ) public override onlyOwner {
+        subjectFeePercent = _feePercent;
+    }
+
+    function getPrice(
+        uint256 supply,
+        uint256 amount
+    ) public pure override returns (uint256) {
+        uint256 sum1 = supply == 0
+            ? 0
+            : ((supply - 1) * (supply) * (2 * (supply - 1) + 1)) / 6;
+        uint256 sum2 = supply == 0 && amount == 1
+            ? 0
+            : ((amount - 1 + supply) *
+                (supply + amount) *
+                (2 * (amount + supply - 1) + 1)) / 6;
+        uint256 summation = sum2 - sum1;
+        return (summation * 1 ether) / 16000;
+    }
+
+    receive() external payable {}
+
+    fallback() external payable {}
+
+    // Transfers cards from current owner to receiver. Can be used for gifting or distributing cards.
+    function transferCards(
+        address _cardsSubject,
+        address _to,
+        uint256 _amount
+    ) public override {
+        require(
+            _amount <= cardsBalance[_cardsSubject][msg.sender],
+            "Not enough cards to transfer"
+        );
+        _transfer(_cardsSubject, msg.sender, _to, _amount);
+    }
+
+    function _transfer(
+        address _cardsSubject,
+        address _from,
+        address _to,
+        uint256 _amount
+    ) internal {
+        cardsBalance[_cardsSubject][_from] -= _amount;
+        cardsBalance[_cardsSubject][_to] += _amount;
+
+        emit Transfer(_cardsSubject, _from, _to, _amount);
+    }
+
+    function _approve(
+        address _cardsSubject,
+        address _from,
+        address _to,
+        uint256 _amount
+    ) internal {
+        approvals[_cardsSubject][_from][_to] = _amount;
+
+        emit Approval(_cardsSubject, _from, _to, _amount);
+    }
+
+    function _spendAllowance(
+        address _cardsSubject,
+        address _owner,
+        address _spender,
+        uint256 _amount
+    ) internal {
+        uint256 currentAllowance = approvals[_cardsSubject][_owner][_spender];
+        if (currentAllowance != type(uint256).max) {
+            require(currentAllowance >= _amount, "Not enough approved");
+            _approve(
+                _cardsSubject,
+                _owner,
+                _spender,
+                currentAllowance - _amount
+            );
+        }
+    }
+
+    // Transfers from address, spends allowance
+    function transferFrom(
+        address _cardsSubject,
+        address _from,
+        address _to,
+        uint256 _amount
+    ) public override {
+        address spender = msg.sender;
+        _spendAllowance(_cardsSubject, _from, spender, _amount);
+        _transfer(_cardsSubject, _from, _to, _amount);
+    }
+
+    // Approve cards from current owner to aprovee.
+    function approve(
+        address _cardsSubject,
+        address _to,
+        uint256 _amount
+    ) public override {
+        _approve(_cardsSubject, msg.sender, _to, _amount);
+    }
+
+    // Set Presale
+    function setPresale(
+        address[] calldata _addresses,
+        uint256[] calldata _cardsAllowed,
+        uint256 _price,
+        uint32 _endTimestamp
+    ) public override {
+        Presale storage presale = presales[msg.sender];
+        require(presale.status == PresaleStage.NotSetteled, "Already setteled");
+        presale.price = _price;
+        presale.endTimestamp = _endTimestamp;
+        for (uint i = 0; i < _addresses.length; i++) {
+            presale.whitelist[_addresses[i]] = _cardsAllowed[i];
+        }
+        presale.status = PresaleStage.Initialized;
+    }
+
+    // Contribute to presale
+    function contribute(
+        address _cardsSubject,
+        uint256 _cards
+    ) public payable override {
+        Presale storage presale = presales[_cardsSubject];
+        require(
+            presale.status == PresaleStage.Initialized &&
+                presale.endTimestamp > block.timestamp,
+            "Presale is not available"
+        );
+        require(presale.whitelist[msg.sender] >= _cards, "Not whitelisted");
+        require(msg.value >= _cards * presale.price, "Not enough ETH");
+        presale.whitelist[msg.sender] -= _cards;
+        presale.contributions[msg.sender] += _cards;
+        presale.totalCards += _cards;
+        presale.proceededValue += msg.value;
+    }
+
+    // Creator claim proceeds
+    function publicCards() public payable override {
+        require(
+            presales[msg.sender].status == PresaleStage.Initialized,
+            "Presale is not initialized"
+        );
+        uint256 amount = presales[msg.sender].proceededValue;
+        presales[msg.sender].proceededValue = 0;
+        presales[msg.sender].status = PresaleStage.Public;
+        buyCards(msg.sender, presales[msg.sender].totalCards + 1);
+        _transfer(
+            msg.sender,
+            msg.sender,
+            address(this),
+            presales[msg.sender].totalCards
+        );
+        (bool sent, ) = msg.sender.call{value: amount}("");
+        require(sent, "Failed to send Ether");
+    }
+
+    function claimCards(address cardsSubject) public override {
+        require(
+            presales[cardsSubject].status == PresaleStage.Public,
+            "Presale is not public"
+        );
+        require(
+            presales[cardsSubject].contributions[msg.sender] > 0,
+            "No cards to claim"
+        );
+        _transfer(
+            cardsSubject,
+            address(this),
+            msg.sender,
+            presales[cardsSubject].contributions[msg.sender]
+        );
+        presales[cardsSubject].contributions[msg.sender] = 0;
+    }
+
+    function getBuyPriceAfterFee(
+        address cardsSubject,
+        uint256 amount
+    ) public view override returns (uint256) {
+        uint256 price = getPrice(cardsSupply[cardsSubject], amount);
+        uint256 protocolFee = (price * protocolFeePercent) / 1 ether;
+        uint256 subjectFee = (price * subjectFeePercent) / 1 ether;
+        return price + protocolFee + subjectFee;
+    }
+
+    function getSellPriceAfterFee(
+        address cardsSubject,
+        uint256 amount
+    ) public view override returns (uint256) {
+        uint256 price = getPrice(cardsSupply[cardsSubject] - amount, amount);
+        uint256 protocolFee = (price * protocolFeePercent) / 1 ether;
+        uint256 subjectFee = (price * subjectFeePercent) / 1 ether;
+        return price - protocolFee - subjectFee;
+    }
+
+    function buyCards(
+        address cardsSubject,
+        uint256 amount
+    ) public payable override entrancyReguard {
+        uint256 supply = cardsSupply[cardsSubject];
+        require(
+            presales[msg.sender].status != PresaleStage.Initialized,
+            "Preslae is not end"
+        );
+        require(
+            supply > 0 || cardsSubject == msg.sender,
+            "Only the cards' subject can buy the first card"
+        );
+        uint256 price = getPrice(supply, amount);
+        uint256 protocolFee = (price * protocolFeePercent) / 1 ether;
+        uint256 subjectFee = (price * subjectFeePercent) / 1 ether;
+        require(
+            msg.value >= price + protocolFee + subjectFee,
+            "Insufficient payment"
+        );
+        cardsBalance[cardsSubject][msg.sender] =
+            cardsBalance[cardsSubject][msg.sender] +
+            amount;
+        cardsSupply[cardsSubject] = supply + amount;
+        emit Trade(
+            msg.sender,
+            cardsSubject,
+            true,
+            amount,
+            price,
+            protocolFee,
+            subjectFee,
+            supply + amount
+        );
+        (bool success1, ) = protocolFeeDestination.call{value: protocolFee}("");
+        (bool success2, ) = cardsSubject.call{value: subjectFee}("");
+        require(success1 && success2, "Unable to send funds");
+    }
+
+    function sellCards(
+        address cardsSubject,
+        uint256 amount
+    ) public payable override entrancyReguard {
+        uint256 supply = cardsSupply[cardsSubject];
+        require(supply > amount, "Cannot sell the last card");
+        uint256 price = getPrice(supply - amount, amount);
+        uint256 protocolFee = (price * protocolFeePercent) / 1 ether;
+        uint256 subjectFee = (price * subjectFeePercent) / 1 ether;
+        require(
+            cardsBalance[cardsSubject][msg.sender] >= amount,
+            "Insufficient cards"
+        );
+        cardsBalance[cardsSubject][msg.sender] =
+            cardsBalance[cardsSubject][msg.sender] -
+            amount;
+        cardsSupply[cardsSubject] = supply - amount;
+        emit Trade(
+            msg.sender,
+            cardsSubject,
+            false,
+            amount,
+            price,
+            protocolFee,
+            subjectFee,
+            supply - amount
+        );
+        (bool success1, ) = msg.sender.call{
+            value: price - protocolFee - subjectFee
+        }("");
+        (bool success2, ) = protocolFeeDestination.call{value: protocolFee}("");
+        (bool success3, ) = cardsSubject.call{value: subjectFee}("");
+        require(success1 && success2 && success3, "Unable to send funds");
+    }
+}

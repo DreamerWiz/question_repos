@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
+
+contract Question0007Solution is ERC1155 {
+    uint256 public constant MINTING_FEE = 0.01 ether;
+    uint256 public constant ITEM_ID = 0;
+    uint256 public constant REFUND_PERIOD = 7 days;
+
+    mapping(address => uint256) public mintingTimestamps;
+
+    constructor() ERC1155("https://myapi.com/{id}.json") {}
+
+    function mintItem() public payable {
+        require(msg.value >= MINTING_FEE, "Not enough ETH to mint item");
+        _mint(msg.sender, ITEM_ID, 1, "");
+        if (msg.value > MINTING_FEE) {
+            (bool success,) = payable(msg.sender).call{value: msg.value - MINTING_FEE}("");
+            require(success);
+        }
+        mintingTimestamps[msg.sender] = block.timestamp;
+    }
+
+    function refundItem() public {
+        require(block.timestamp <= mintingTimestamps[msg.sender] + REFUND_PERIOD, "Refund period has expired");
+        _burn(msg.sender, ITEM_ID, 1);
+        (bool success,) = payable(msg.sender).call{value: MINTING_FEE}("");
+        require(success);
+    }
+}
+

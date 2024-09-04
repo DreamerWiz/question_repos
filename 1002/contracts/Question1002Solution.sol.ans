@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: MIT 
+pragma solidity 0.8.16;
+
+import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+
+abstract contract Question1002Base is ERC721{
+    constructor(address owner, uint capacity){}   // initialize owner and capacity
+    function owner() external view virtual returns(address); // return address of the owner
+    function setCapacity(uint cap) external virtual; // function for setting capacity.
+    function capacity() external view virtual returns(uint); // return the capacity.
+    function mint(address account, uint tokenId) virtual external; // function for mingting tokens.
+    function tokenShare(uint tokenId) external view virtual returns(uint); // return the share of the token.
+    function earned() external view virtual returns(uint); // return the amount of incomes that the message sender has earned.
+    function claimed() external view virtual returns(uint); // return the amount of calimed incomes of the message sender.
+    function claim() external virtual; // function for claiming rewards.
+    function allocate() external payable virtual; // function for allocating rewards.
+}
+
+contract Question1002Solution is Question1002Base{
+    uint256 public rewardPerShare;
+    uint256 public totalSupply;
+    uint256 public totalShares;
+
+    uint256 private _cap;
+    address private _owner;
+    mapping(uint => bool) private _minted;
+    mapping(address => uint256) public userShares;
+    mapping(address => uint256) public rewardDebt;
+    mapping(uint256 => uint256) public override tokenShare;
+
+    mapping(address => uint256) public _userEarned;
+    mapping(address => uint256) public _claimed;
+
+    uint public lock;
+
+    modifier entrancyReguard(){
+        require(lock == 0);
+        lock = 1;
+        _;
+        lock = 0;
+    }
+
+    modifier updateReward(address account){
+        _userEarned[account] = _earned(account);
+        _;
+    }
+
+    modifier onlyOwner(){
+        require(msg.sender == _owner);
+        _;
+    }
+
+    constructor(address owner, uint capacity) ERC721("TEST", "TEST") Question1002Base(owner, capacity){
+        require(owner != address(0));
+        require(capacity != 0);
+        _cap = capacity;
+        _owner = owner;
+    }
+
+    function owner() external view override returns(address){
+        return _owner;
+    }
+
+    function capacity() external view override returns(uint){
+        return _cap;
+    }
+
+    function setCapacity(uint cap) external override onlyOwner{
+        require(cap >= totalSupply && cap != 0);
+        _cap = cap;
+    }
+
+    function mint(address account, uint tokenId) override onlyOwner() external{
+        _mint(account,tokenId);
+    }
+
+    // first step to implement the requirement, get totalSupply. TotalShares.
+    function _beforeTokenTransfer(address from, address to, uint256 firstTokenId, uint256 batchsize) 
+        updateReward(from) updateReward(to) internal override{
+        if(from == address(0)){
+            require(totalSupply < _cap);  
+            uint randomN = uint(keccak256(abi.encode(block.timestamp, from, to))) % 50 + 50;
+            // totalShares += randomN;
+            tokenShare[firstTokenId] = randomN;
+            totalShares += randomN;
+            userShares[to] += randomN;
+            totalSupply += 1;
+        }
+        else{
+            userShares[from] -= tokenShare[firstTokenId];
+            userShares[to] += tokenShare[firstTokenId];
+            rewardDebt[from] = userShares[from] * rewardPerShare;
+            rewardDebt[to] = userShares[to] * rewardPerShare;
+        }
+    }
+
+    function allocate() entrancyReguard override external payable{
+        if(totalShares == 0){
+            revert("No tokens now");
+        }
+        // TODO All money can be allocated.
+        uint left = msg.value - msg.value / totalShares * totalShares;
+        rewardPerShare += (msg.value - left) / totalShares;
+        (bool success, bytes memory data) = payable(msg.sender).call{value: left}("");
+        require(success, "fsdafdsa");
+    }
+
+    function earned() public view override returns(uint){
+        return _earned(msg.sender);
+    }
+
+    function _earned(address account) internal view returns(uint){
+        return _userEarned[account] + userShares[account] * rewardPerShare - rewardDebt[account];
+    }   
+
+    function claim() external entrancyReguard override updateReward(msg.sender){
+        uint claimAmount = _userEarned[msg.sender] - _claimed[msg.sender];
+        require(claimAmount > 0, "aa");
+        (bool success, bytes memory data) = payable(msg.sender).call{value: claimAmount}("");
+        require(success, "failed");
+        _claimed[msg.sender] = _userEarned[msg.sender];
+    }
+
+    function claimed() external override view returns(uint){
+        return _claimed[msg.sender];
+    }
+}

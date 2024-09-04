@@ -1,0 +1,187 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+// OpenZeppelin Contracts (last updated v4.9.0) (token/ERC721/ERC721.sol)
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+
+abstract contract EthMonsterBase is ERC721 {
+    constructor() ERC721("EthMonster", "EMON") {}
+
+    function mintMonster() external payable virtual;
+
+    function sendOnRaid(uint256 monsterId, uint256 blocks) external virtual;
+
+    function claimRaid(uint256 monsterId) external virtual;
+
+    function levelUp(uint256 monsterId) external payable virtual;
+
+    function abandonMonster(uint256 monsterId) external virtual;
+
+    function recallMonster(uint256 monsterId) external virtual;
+
+    function isOnRaid(uint256 monsterId) external view virtual returns (bool);
+
+    function isAbandoned(
+        uint256 monsterId
+    ) external view virtual returns (bool);
+
+    function getLevel(
+        uint256 monsterId
+    ) external view virtual returns (uint256);
+
+    function getExp(uint256 monsterId) external view virtual returns (uint256);
+}
+
+contract Question1003Solution is EthMonsterBase{
+    struct Monster {
+        uint256 level;
+        uint256 experience;
+        bool isOnRaid;
+        uint256 blockDeployed;
+        uint256 blocksForRaid;
+    }
+
+    address public owner;
+    bool private locked;
+    mapping(uint256 => Monster) public monsters;
+    mapping(uint256 => bool) public _isAbandoned;
+    uint256 public nextMonsterId = 1;
+    uint256 public raidExperience = 10;
+    uint256 public raidEther = 0.0001 ether;
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not the contract owner");
+        _;
+    }
+
+    modifier nonReentrant() {
+        require(!locked, "Reentrant call detected");
+        locked = true;
+        _;
+        locked = false;
+    }
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function isOnRaid(uint256 monsterId) external view override returns (bool) {
+        return monsters[monsterId].isOnRaid;
+    }
+
+    function getLevel(
+        uint256 monsterId
+    ) external view override returns (uint256) {
+        return monsters[monsterId].level;
+    }
+
+    function getExp(
+        uint256 monsterId
+    ) external view override returns (uint256) {
+        return monsters[monsterId].experience;
+    }
+
+    function isAbandoned(
+        uint256 monsterId
+    ) external view override returns (bool) {
+        return _isAbandoned[monsterId];
+    }
+
+    function mintMonster() external payable override {
+        require(msg.value == 1 ether, "Must send 1 ether to mint a monster");
+        uint256 monsterId = nextMonsterId;
+        nextMonsterId++;
+        _mint(msg.sender, monsterId);
+        monsters[monsterId] = Monster({
+            level: 1,
+            experience: 0,
+            isOnRaid: false,
+            blockDeployed: 0,
+            blocksForRaid: 0
+        });
+    }
+
+    function sendOnRaid(uint256 monsterId, uint256 blocks) external override {
+        _checkAuthorized(_ownerOf(monsterId), msg.sender, monsterId);
+        require(!_isAbandoned[monsterId], "Monster has been abandoned");
+        Monster storage monster = monsters[monsterId];
+        require(!monster.isOnRaid, "Monster is already on a raid");
+        monster.isOnRaid = true;
+        monster.blockDeployed = block.number;
+        monster.blocksForRaid = blocks;
+    }
+
+    function claimRaid(uint256 monsterId) external override nonReentrant {
+        _checkAuthorized(_ownerOf(monsterId), msg.sender, monsterId);
+        require(!_isAbandoned[monsterId], "Monster has been abandoned");
+        Monster storage monster = monsters[monsterId];
+        require(
+            monster.blockDeployed + monster.blocksForRaid < block.number,
+            "Raid is not yet finished"
+        );
+        uint256 experience = raidExperience *
+            monster.level *
+            monster.blocksForRaid;
+        uint256 etherReward = raidEther *
+            2 ** (monster.level - 1) *
+            monster.blocksForRaid;
+        monster.experience += experience;
+        monster.isOnRaid = false;
+        monster.blockDeployed = 0;
+        monster.blocksForRaid = 0;
+        (bool success, ) = payable(msg.sender).call{value: etherReward}("");
+        require(success, "Transfer failed.");
+    }
+
+    function levelUp(uint256 monsterId) external payable override nonReentrant {
+        _checkAuthorized(_ownerOf(monsterId), msg.sender, monsterId);
+        require(!_isAbandoned[monsterId], "Monster has been abandoned");
+        Monster storage monster = monsters[monsterId];
+        require(!monster.isOnRaid, "Monster is on a raid");
+        uint256 requiredExperience = 100 * 2 ** monster.level;
+        uint256 requiredEther = 0.1 ether * 2 ** monster.level;
+        require(
+            monster.experience >= requiredExperience,
+            "Not enough experience"
+        );
+        require(msg.value >= requiredEther, "Not enough ether");
+        monster.level++;
+        monster.experience = 0;
+    }
+
+    function abandonMonster(uint256 monsterId) external override nonReentrant {
+        _checkAuthorized(_ownerOf(monsterId), msg.sender, monsterId);
+        require(!_isAbandoned[monsterId], "Monster has been abandoned");
+        Monster storage monster = monsters[monsterId];
+        require(!monster.isOnRaid, "Monster is on a raid");
+        uint256 refundEther = (0.1 ether * 2 ** (monster.level - 1)) / 2;
+        delete monsters[monsterId];
+        _isAbandoned[monsterId] = true;
+        _burn(monsterId);
+        (bool success, ) = payable(msg.sender).call{value: refundEther}("");
+        require(success, "Transfer failed.");
+    }
+
+    function recallMonster(uint256 monsterId) external override nonReentrant {
+        _checkAuthorized(_ownerOf(monsterId), msg.sender, monsterId);
+        require(!_isAbandoned[monsterId], "Monster has been abandoned");
+        Monster storage monster = monsters[monsterId];
+        require(monster.isOnRaid, "Monster is not on a raid");
+
+        monster.isOnRaid = false;
+        monster.blockDeployed = 0;
+        monster.blocksForRaid = 0;
+    }
+    function transferFrom(address from, address to, uint256 tokenId) public override {
+        if (to == address(0)) {
+            revert ERC721InvalidReceiver(address(0));
+        }
+        require(!_isAbandoned[tokenId], "Monster has been abandoned");
+        require(!monsters[tokenId].isOnRaid, "Monster is on a raid");
+        // Setting an "auth" arguments enables the `_isAuthorized` check which verifies that the token exists
+        // (from != 0). Therefore, it is not needed to verify that the return value is not 0 here.
+        address previousOwner = _update(to, tokenId, _msgSender());
+        if (previousOwner != from) {
+            revert ERC721IncorrectOwner(from, tokenId, previousOwner);
+        }
+    }
+}
